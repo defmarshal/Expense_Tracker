@@ -767,25 +767,8 @@
                 customCategories = data.categories || [];
                 subCategories = data.subCategories || {};
 
-                // Fix old expenses that might have combined category:subcategory format
-                expenses = expenses.map(expense => {
-                    console.log('Checking expense:', expense);
-                    if (expense.category && expense.category.includes(':') && !expense.subCategory) {
-                        const parts = expense.category.split(':');
-                        console.log('Fixing expense - splitting:', expense.category, 'into', parts[0], 'and', parts.slice(1).join(':'));
-                        return {
-                            ...expense,
-                            category: parts[0],
-                            subCategory: parts.slice(1).join(':')
-                        };
-                    }
-                    return expense;
-                });
-
-                console.log('Fixed expenses:', expenses);
-
-                // Save the fixed data back
-                await syncToGist();
+                // Auto-fix expenses that might have combined category:subcategory format
+                fixExpensesFormat();
 
                 updateCategoryDropdown();
                 renderExpenses();
@@ -818,7 +801,21 @@
         }
 
         async function fixAllExpenses() {
-            console.log('Fixing all expenses...');
+            console.log('Manual fix triggered...');
+            fixExpensesFormat();
+            
+            if (expenses.length > 0) {
+                saveExpenses();
+                await syncToGist();
+                renderExpenses();
+                alert('Expense data format fixed! Check Analytics tab now.');
+            } else {
+                alert('No expenses to fix.');
+            }
+        }
+
+        function fixExpensesFormat() {
+            console.log('Fixing expenses format...');
             console.log('Before fix:', JSON.stringify(expenses, null, 2));
             
             let fixedCount = 0;
@@ -839,14 +836,7 @@
             console.log('After fix:', JSON.stringify(expenses, null, 2));
             console.log(`Fixed ${fixedCount} expenses`);
             
-            if (fixedCount > 0) {
-                saveExpenses();
-                await syncToGist();
-                renderExpenses();
-                alert(`Fixed ${fixedCount} expense(s)! Check Analytics tab now.`);
-            } else {
-                alert('No expenses need fixing.');
-            }
+            return fixedCount;
         }
 
         // Try to load from gist on startup if configured
