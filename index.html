@@ -407,6 +407,7 @@
                 <button class="nav-tab" onclick="showPage('analytics')">Analytics</button>
                 <button class="nav-tab" onclick="showPage('categories')">Categories</button>
                 <button class="nav-tab" onclick="showPage('subcategories')">Sub Categories</button>
+                <button class="nav-tab" onclick="showPage('settings')">Settings</button>
             </div>
 
             <div id="expensesPage" class="page active">
@@ -493,6 +494,30 @@
                     <div id="subCategoryList"></div>
                 </div>
             </div>
+
+            <div id="settingsPage" class="page">
+                <h2 style="margin-bottom: 20px; color: #333;">GitHub Gist Storage</h2>
+                
+                <div class="form-group">
+                    <label for="githubToken">GitHub Personal Access Token</label>
+                    <input type="password" id="githubToken" placeholder="ghp_xxxxxxxxxxxx" value="">
+                    <p style="font-size: 0.9em; color: #666; margin-top: 5px;">
+                        Create a token at <a href="https://github.com/settings/tokens" target="_blank" style="color: #667eea;">GitHub Settings</a> with 'gist' scope
+                    </p>
+                </div>
+
+                <button type="button" class="add-btn" onclick="saveGitHubToken()">Save Token & Sync Now</button>
+
+                <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
+                    <h3 style="margin-bottom: 10px; color: #666;">Sync Status</h3>
+                    <div id="syncStatus" style="color: #999;">Not configured</div>
+                    <div id="lastSync" style="color: #999; font-size: 0.9em; margin-top: 5px;"></div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <button type="button" onclick="manualSync()" style="background: #43e97b;">Manual Sync Now</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -529,10 +554,20 @@
         let subCategories = {}; // { categoryName: [subcat1, subcat2, ...] }
         let categoryToDelete = null;
         let categoryChart = null;
+        
+        // GitHub Gist Configuration
+        let GITHUB_TOKEN = localStorage.getItem('github_token') || '';
+        let GIST_ID = localStorage.getItem('gist_id') || '';
 
         // Set today's date as default
         const today = new Date().toISOString().split('T')[0];
         document.getElementById('date').value = today;
+
+        // Load GitHub token on startup
+        if (GITHUB_TOKEN) {
+            document.getElementById('githubToken').value = GITHUB_TOKEN;
+            updateSyncStatus();
+        }
 
         // Format number input with thousand separator
         const amountInput = document.getElementById('amount');
@@ -611,6 +646,146 @@
         loadExpenses();
         loadCategories();
 
+        // GitHub Gist Functions
+        async function saveGitHubToken() {
+            const token = document.getElementById('githubToken').value.trim();
+            if (!token) {
+                alert('Please enter a GitHub token');
+                return;
+            }
+
+            GITHUB_TOKEN = token;
+            localStorage.setItem('github_token', token);
+            
+            await syncToGist();
+        }
+
+        async function syncToGist() {
+            if (!GITHUB_TOKEN) {
+                alert('Please configure GitHub token first');
+                return;
+            }
+
+            const data = {
+                expenses: expenses,
+                categories: customCategories,
+                subCategories: subCategories
+            };
+
+            try {
+                updateSyncStatus('Syncing...', '#667eea');
+
+                if (GIST_ID) {
+                    // Update existing gist
+                    const response = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Authorization': `token ${GITHUB_TOKEN}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            files: {
+                                'expense-data.json': {
+                                    content: JSON.stringify(data, null, 2)
+                                }
+                            }
+                        })
+                    });
+
+                    if (!response.ok) throw new Error('Failed to update gist');
+                    updateSyncStatus('✓ Synced successfully', '#43e97b');
+                } else {
+                    // Create new gist
+                    const response = await fetch('https://api.github.com/gists', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `token ${GITHUB_TOKEN}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            description: 'Expense Tracker Data',
+                            public: false,
+                            files: {
+                                'expense-data.json': {
+                                    content: JSON.stringify(data, null, 2)
+                                }
+                            }
+                        })
+                    });
+
+                    if (!response.ok) throw new Error('Failed to create gist');
+                    
+                    const gist = await response.json();
+                    GIST_ID = gist.id;
+                    localStorage.setItem('gist_id', GIST_ID);
+                    updateSyncStatus('✓ Synced successfully (new gist created)', '#43e97b');
+                }
+
+                localStorage.setItem('last_sync', new Date().toISOString());
+                updateLastSyncTime();
+            } catch (error) {
+                console.error('Sync error:', error);
+                updateSyncStatus('✗ Sync failed: ' + error.message, '#ff4757');
+            }
+        }
+
+        async function loadFromGist() {
+            if (!GITHUB_TOKEN || !GIST_ID) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+                    headers: {
+                        'Authorization': `token ${GITHUB_TOKEN}`
+                    }
+                });
+
+                if (!response.ok) throw new Error('Failed to load from gist');
+
+                const gist = await response.json();
+                const content = gist.files['expense-data.json'].content;
+                const data = JSON.parse(content);
+
+                expenses = data.expenses || [];
+                customCategories = data.categories || [];
+                subCategories = data.subCategories || {};
+
+                updateCategoryDropdown();
+                renderExpenses();
+                updateSyncStatus('✓ Loaded from GitHub', '#43e97b');
+            } catch (error) {
+                console.error('Load error:', error);
+                updateSyncStatus('Could not load from GitHub', '#ff4757');
+            }
+        }
+
+        function updateSyncStatus(message, color) {
+            const statusDiv = document.getElementById('syncStatus');
+            if (statusDiv) {
+                statusDiv.textContent = message || (GITHUB_TOKEN ? '✓ Configured' : 'Not configured');
+                statusDiv.style.color = color || (GITHUB_TOKEN ? '#43e97b' : '#999');
+            }
+        }
+
+        function updateLastSyncTime() {
+            const lastSync = localStorage.getItem('last_sync');
+            const lastSyncDiv = document.getElementById('lastSync');
+            if (lastSyncDiv && lastSync) {
+                const date = new Date(lastSync);
+                lastSyncDiv.textContent = `Last synced: ${date.toLocaleString()}`;
+            }
+        }
+
+        async function manualSync() {
+            await syncToGist();
+        }
+
+        // Try to load from gist on startup if configured
+        if (GITHUB_TOKEN && GIST_ID) {
+            loadFromGist();
+        }
+
         function showPage(pageName) {
             // Update tabs
             document.querySelectorAll('.nav-tab').forEach(tab => {
@@ -635,6 +810,10 @@
                 document.getElementById('subCategoriesPage').classList.add('active');
                 updateParentCategorySelect();
                 renderSubCategories();
+            } else if (pageName === 'settings') {
+                document.getElementById('settingsPage').classList.add('active');
+                updateSyncStatus();
+                updateLastSyncTime();
             }
         }
 
@@ -1232,6 +1411,11 @@
             saveExpenses();
             renderExpenses();
             
+            // Auto-sync to GitHub if configured
+            if (GITHUB_TOKEN && GIST_ID) {
+                syncToGist();
+            }
+            
             // Clear form
             document.getElementById('name').value = '';
             document.getElementById('amount').value = '';
@@ -1242,6 +1426,11 @@
             expenses = expenses.filter(exp => exp.id !== id);
             saveExpenses();
             renderExpenses();
+            
+            // Auto-sync to GitHub if configured
+            if (GITHUB_TOKEN && GIST_ID) {
+                syncToGist();
+            }
         }
 
         function renderExpenses() {
