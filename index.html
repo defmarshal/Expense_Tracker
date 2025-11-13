@@ -500,22 +500,32 @@
                 
                 <div class="form-group">
                     <label for="githubToken">GitHub Personal Access Token</label>
-                    <input type="password" id="githubToken" placeholder="ghp_xxxxxxxxxxxx" value="">
+                    <input type="password" id="githubToken" placeholder="ghp_xxxxxxxxxxxx">
                     <p style="font-size: 0.9em; color: #666; margin-top: 5px;">
-                        Create a token at <a href="https://github.com/settings/tokens" target="_blank" style="color: #667eea;">GitHub Settings</a> with 'gist' scope
+                        Create a token at <a href="https://github.com/settings/tokens" target="_blank" style="color: #667eea;">GitHub Settings</a> with 'gist' scope only
                     </p>
                 </div>
 
                 <button type="button" class="add-btn" onclick="saveGitHubToken()">Save Token & Sync Now</button>
 
-                <div style="margin-top: 30px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                    <h3 style="margin-bottom: 10px; color: #666;">Sync Status</h3>
-                    <div id="syncStatus" style="color: #999;">Not configured</div>
-                    <div id="lastSync" style="color: #999; font-size: 0.9em; margin-top: 5px;"></div>
+                <div style="margin-top: 30px; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+                    <h3 style="margin-bottom: 10px; color: #666; font-size: 1.1em;">Sync Status</h3>
+                    <div id="syncStatus" style="color: #999; font-size: 1em;">Not configured</div>
+                    <div id="lastSync" style="color: #999; font-size: 0.9em; margin-top: 8px;"></div>
                 </div>
 
                 <div style="margin-top: 20px;">
-                    <button type="button" onclick="manualSync()" style="background: #43e97b;">Manual Sync Now</button>
+                    <button type="button" class="add-btn" onclick="manualSync()" style="background: #43e97b;">Manual Sync Now</button>
+                </div>
+
+                <div style="margin-top: 30px; padding: 20px; background: #fff3cd; border-radius: 8px; border: 1px solid #ffc107;">
+                    <h4 style="color: #856404; margin-bottom: 10px;">⚠️ Important Notes:</h4>
+                    <ul style="color: #856404; margin-left: 20px; line-height: 1.6;">
+                        <li>Your data will be stored in a private GitHub Gist</li>
+                        <li>The token is saved in your browser's localStorage</li>
+                        <li>Data syncs automatically when you add/delete expenses</li>
+                        <li>Use the same token on other devices to sync data</li>
+                    </ul>
                 </div>
             </div>
         </div>
@@ -617,6 +627,11 @@
                 updateCategoryDropdown();
                 renderCategories();
                 closeDeleteModal();
+                
+                // Auto-sync to GitHub if configured
+                if (GITHUB_TOKEN && GIST_ID) {
+                    syncToGist();
+                }
             }
         }
 
@@ -750,6 +765,26 @@
                 expenses = data.expenses || [];
                 customCategories = data.categories || [];
                 subCategories = data.subCategories || {};
+
+                // Fix old expenses that might have combined category:subcategory format
+                expenses = expenses.map(expense => {
+                    console.log('Checking expense:', expense);
+                    if (expense.category && expense.category.includes(':') && !expense.subCategory) {
+                        const parts = expense.category.split(':');
+                        console.log('Fixing expense - splitting:', expense.category, 'into', parts[0], 'and', parts.slice(1).join(':'));
+                        return {
+                            ...expense,
+                            category: parts[0],
+                            subCategory: parts.slice(1).join(':')
+                        };
+                    }
+                    return expense;
+                });
+
+                console.log('Fixed expenses:', expenses);
+
+                // Save the fixed data back
+                await syncToGist();
 
                 updateCategoryDropdown();
                 renderExpenses();
@@ -1117,6 +1152,11 @@
             updateCategoryDropdown();
             renderSubCategories();
             subCatInput.value = '';
+            
+            // Auto-sync to GitHub if configured
+            if (GITHUB_TOKEN && GIST_ID) {
+                syncToGist();
+            }
         }
 
         function deleteSubCategory(parentCat, subCat) {
@@ -1128,6 +1168,11 @@
                 saveCategories();
                 updateCategoryDropdown();
                 renderSubCategories();
+                
+                // Auto-sync to GitHub if configured
+                if (GITHUB_TOKEN && GIST_ID) {
+                    syncToGist();
+                }
             }
         }
 
@@ -1200,6 +1245,11 @@
             updateCategoryDropdown();
             renderCategories();
             input.value = '';
+            
+            // Auto-sync to GitHub if configured
+            if (GITHUB_TOKEN && GIST_ID) {
+                syncToGist();
+            }
         }
 
         function renderCategories() {
